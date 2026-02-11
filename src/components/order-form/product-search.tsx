@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Input } from "@/components/ui/input";
+import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/supabase/types";
 
 type Product = Database["public"]["Tables"]["products"]["Row"];
@@ -17,6 +18,46 @@ export function ProductSearch({ onSelect, disabled }: ProductSearchProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const supabaseRef = useRef(createClient());
+  const searchIdRef = useRef(0);
+
+  const search = useCallback(async (q: string) => {
+    // 各リクエストにIDを振り、古い結果を無視する
+    const id = ++searchIdRef.current;
+
+    if (q.length < 1) {
+      setResults([]);
+      setIsOpen(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data, error } = await supabaseRef.current
+        .from("products")
+        .select("*")
+        .eq("is_active", true)
+        .or(`code.ilike.%${q}%,name.ilike.%${q}%`)
+        .order("code")
+        .limit(20);
+
+      // 古いリクエストの結果は捨てる
+      if (id !== searchIdRef.current) return;
+
+      if (!error && data) {
+        setResults(data);
+        setIsOpen(true);
+      }
+    } catch {
+      if (id === searchIdRef.current) {
+        setResults([]);
+      }
+    } finally {
+      if (id === searchIdRef.current) {
+        setLoading(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (query.length < 1) {
@@ -25,24 +66,9 @@ export function ProductSearch({ onSelect, disabled }: ProductSearchProps) {
       return;
     }
 
-    const timer = setTimeout(async () => {
-      setLoading(true);
-      try {
-        const res = await fetch(
-          `/api/products/search?q=${encodeURIComponent(query)}`
-        );
-        const data = await res.json();
-        setResults(data.products || []);
-        setIsOpen(true);
-      } catch {
-        setResults([]);
-      } finally {
-        setLoading(false);
-      }
-    }, 300);
-
+    const timer = setTimeout(() => search(query), 150);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, search]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {

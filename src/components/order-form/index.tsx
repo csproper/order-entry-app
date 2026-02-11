@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Plus, Save, Loader2 } from "lucide-react";
+import { Save, Loader2 } from "lucide-react";
 import { CustomerSection } from "./customer-section";
 import { ProductSearch } from "./product-search";
 import { DetailItem, type DetailValues } from "./detail-item";
@@ -145,7 +145,6 @@ export function OrderForm({
         updated[index] = { ...updated[index], [field]: value };
         return updated;
       });
-      // 該当フィールドのエラーをクリア
       const errorKey = `detail_${index}_${field}`;
       if (errors[errorKey]) {
         setErrors((prev) => ({ ...prev, [errorKey]: undefined }));
@@ -224,7 +223,6 @@ export function OrderForm({
     const newErrors: Record<string, string | undefined> = {};
     const errorMessages: string[] = [];
 
-    // 注文者情報バリデーション
     if (!customer.customer_name) {
       newErrors.customer_name = "注文者氏名を入力してください";
       errorMessages.push("注文者氏名が未入力です");
@@ -259,7 +257,6 @@ export function OrderForm({
       errorMessages.push("商品が追加されていません");
     }
 
-    // 明細ごとのバリデーション
     details.forEach((d, i) => {
       const lineNum = i + 1;
       if (!d.delivery_name) {
@@ -294,7 +291,6 @@ export function OrderForm({
 
     setErrors(newErrors);
 
-    // エラーがあれば具体的な内容をトースト表示 + スクロール
     if (errorMessages.length > 0) {
       const displayMessages = errorMessages.slice(0, 5);
       const remaining = errorMessages.length - displayMessages.length;
@@ -310,7 +306,6 @@ export function OrderForm({
         </div>
       );
 
-      // 最初のエラー要素へスクロール
       setTimeout(() => {
         const firstError = document.querySelector(".border-red-500, [data-error='true']");
         if (firstError) {
@@ -380,7 +375,6 @@ export function OrderForm({
 
       if (!res.ok) {
         const err = await res.json();
-        // サーバーのZodバリデーション詳細があれば展開して表示
         if (err.details) {
           const serverErrors: string[] = [];
           for (const [field, messages] of Object.entries(err.details)) {
@@ -411,7 +405,7 @@ export function OrderForm({
     <div className="flex gap-6">
       {/* 左: フォーム */}
       <div className="flex-1 space-y-6">
-        {/* 注文者情報 */}
+        {/* ① 注文者情報 */}
         <Card>
           <CardContent className="pt-6">
             <CustomerSection
@@ -422,7 +416,44 @@ export function OrderForm({
           </CardContent>
         </Card>
 
-        {/* 支払方法・値引き */}
+        {/* ② 商品明細 */}
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            <h2 className="text-lg font-semibold border-b pb-2">商品明細</h2>
+            {isEarlyPrice && (
+              <div className="p-2 text-sm text-amber-700 bg-amber-50 rounded-md">
+                🏷️ 早割期間中です。早割価格が自動適用されます。
+              </div>
+            )}
+            <div>
+              <Label>商品を追加</Label>
+              <ProductSearch onSelect={handleProductSelect} />
+            </div>
+            {errors.details && (
+              <p className="text-sm text-red-500">{errors.details}</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 明細一覧 */}
+        <div className="space-y-4">
+          {details.map((detail, index) => (
+            <DetailItem
+              key={index}
+              index={index}
+              values={detail}
+              lineTotal={calcResult.lineTotals[index] ?? 0}
+              wrappingFee={calcResult.wrappingFees[index] ?? 0}
+              shippingFee={calcResult.shippingFees[index] ?? 0}
+              errors={errors}
+              onChange={handleDetailChange}
+              onRemove={handleDetailRemove}
+              onCopyDeliveryFromOrder={handleCopyDeliveryFromOrder}
+            />
+          ))}
+        </div>
+
+        {/* ③ 支払方法・値引き（商品確定後に入力） */}
         <Card>
           <CardContent className="pt-6 space-y-4">
             <h2 className="text-lg font-semibold border-b pb-2">
@@ -472,43 +503,6 @@ export function OrderForm({
             </div>
           </CardContent>
         </Card>
-
-        {/* 商品追加 */}
-        <Card>
-          <CardContent className="pt-6 space-y-4">
-            <h2 className="text-lg font-semibold border-b pb-2">商品明細</h2>
-            {isEarlyPrice && (
-              <div className="p-2 text-sm text-amber-700 bg-amber-50 rounded-md">
-                🏷️ 早割期間中です。早割価格が自動適用されます。
-              </div>
-            )}
-            <div>
-              <Label>商品を追加</Label>
-              <ProductSearch onSelect={handleProductSelect} />
-            </div>
-            {errors.details && (
-              <p className="text-sm text-red-500">{errors.details}</p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* 明細一覧 */}
-        <div className="space-y-4">
-          {details.map((detail, index) => (
-            <DetailItem
-              key={index}
-              index={index}
-              values={detail}
-              lineTotal={calcResult.lineTotals[index] ?? 0}
-              wrappingFee={calcResult.wrappingFees[index] ?? 0}
-              shippingFee={calcResult.shippingFees[index] ?? 0}
-              errors={errors}
-              onChange={handleDetailChange}
-              onRemove={handleDetailRemove}
-              onCopyDeliveryFromOrder={handleCopyDeliveryFromOrder}
-            />
-          ))}
-        </div>
 
         {/* 保存ボタン */}
         <div className="flex justify-end gap-3 pb-8">

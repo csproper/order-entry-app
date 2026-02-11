@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { createClient } from "@/lib/supabase/client";
 import { fetchAddressFromPostalCode } from "@/lib/postal-code";
 import type { Database } from "@/lib/supabase/types";
 
@@ -36,28 +37,49 @@ export function CustomerSection({
   const [isCustomerOpen, setIsCustomerOpen] = useState(false);
   const [postalLoading, setPostalLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const supabaseRef = useRef(createClient());
+  const searchIdRef = useRef(0);
 
-  // 顧客検索
+  const searchCustomers = useCallback(async (q: string) => {
+    const id = ++searchIdRef.current;
+
+    if (q.length < 1) {
+      setCustomerResults([]);
+      setIsCustomerOpen(false);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabaseRef.current
+        .from("customers")
+        .select("*")
+        .eq("is_active", true)
+        .or(`code.ilike.%${q}%,name.ilike.%${q}%`)
+        .order("code")
+        .limit(20);
+
+      if (id !== searchIdRef.current) return;
+
+      if (!error && data) {
+        setCustomerResults(data);
+        setIsCustomerOpen(true);
+      }
+    } catch {
+      if (id === searchIdRef.current) {
+        setCustomerResults([]);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     if (customerQuery.length < 1) {
       setCustomerResults([]);
       setIsCustomerOpen(false);
       return;
     }
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(
-          `/api/customers/search?q=${encodeURIComponent(customerQuery)}`
-        );
-        const data = await res.json();
-        setCustomerResults(data.customers || []);
-        setIsCustomerOpen(true);
-      } catch {
-        setCustomerResults([]);
-      }
-    }, 300);
+    const timer = setTimeout(() => searchCustomers(customerQuery), 150);
     return () => clearTimeout(timer);
-  }, [customerQuery]);
+  }, [customerQuery, searchCustomers]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -84,7 +106,6 @@ export function CustomerSection({
     setIsCustomerOpen(false);
   };
 
-  // 郵便番号→住所変換
   const handlePostalCodeChange = async (postalCode: string) => {
     onChange("postal_code", postalCode);
     if (/^\d{7}$/.test(postalCode)) {
@@ -99,53 +120,51 @@ export function CustomerSection({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <h2 className="text-lg font-semibold border-b pb-2">注文者情報</h2>
 
+      {/* 顧客検索 */}
+      <div ref={containerRef} className="relative max-w-sm">
+        <Label>統合顧客番号</Label>
+        <Input
+          type="text"
+          placeholder="顧客番号または氏名で検索..."
+          value={customerQuery || values.customer_code}
+          onChange={(e) => {
+            setCustomerQuery(e.target.value);
+            onChange("customer_code", e.target.value);
+          }}
+          onFocus={() =>
+            customerQuery.length >= 1 &&
+            customerResults.length > 0 &&
+            setIsCustomerOpen(true)
+          }
+        />
+        {isCustomerOpen && customerResults.length > 0 && (
+          <div className="absolute z-50 mt-1 w-full bg-white border rounded-md shadow-lg max-h-48 overflow-y-auto">
+            {customerResults.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                onClick={() => handleCustomerSelect(c)}
+              >
+                <span className="font-mono text-gray-500 mr-2">
+                  {c.code}
+                </span>
+                <span>{c.name}</span>
+                <span className="text-gray-400 ml-2 text-xs">
+                  {c.prefecture}
+                  {c.address1}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 氏名 */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* 統合顧客番号 */}
-        <div ref={containerRef} className="relative">
-          <Label>統合顧客番号</Label>
-          <Input
-            type="text"
-            placeholder="顧客番号または氏名で検索..."
-            value={customerQuery || values.customer_code}
-            onChange={(e) => {
-              setCustomerQuery(e.target.value);
-              onChange("customer_code", e.target.value);
-            }}
-            onFocus={() =>
-              customerQuery.length >= 1 &&
-              customerResults.length > 0 &&
-              setIsCustomerOpen(true)
-            }
-          />
-          {isCustomerOpen && customerResults.length > 0 && (
-            <div className="absolute z-50 mt-1 w-full bg-white border rounded-md shadow-lg max-h-48 overflow-y-auto">
-              {customerResults.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
-                  onClick={() => handleCustomerSelect(c)}
-                >
-                  <span className="font-mono text-gray-500 mr-2">
-                    {c.code}
-                  </span>
-                  <span>{c.name}</span>
-                  <span className="text-gray-400 ml-2 text-xs">
-                    {c.prefecture}
-                    {c.address1}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div />
-
-        {/* 注文者氏名 */}
         <div>
           <Label>
             注文者氏名 <span className="text-red-500">*</span>
@@ -159,8 +178,6 @@ export function CustomerSection({
             <p className="text-xs text-red-500 mt-1">{errors.customer_name}</p>
           )}
         </div>
-
-        {/* 注文者氏名カナ */}
         <div>
           <Label>注文者氏名カナ</Label>
           <Input
@@ -168,8 +185,53 @@ export function CustomerSection({
             onChange={(e) => onChange("customer_name_kana", e.target.value)}
           />
         </div>
+      </div>
 
-        {/* 郵便番号 */}
+      {/* 会社・部署 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <Label>会社名</Label>
+          <Input
+            value={values.customer_company}
+            onChange={(e) => onChange("customer_company", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>部署名</Label>
+          <Input
+            value={values.customer_department}
+            onChange={(e) => onChange("customer_department", e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* 連絡先 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <Label>電話番号</Label>
+          <Input
+            value={values.customer_phone}
+            onChange={(e) => onChange("customer_phone", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label>メールアドレス</Label>
+          <Input
+            type="email"
+            value={values.customer_email}
+            onChange={(e) => onChange("customer_email", e.target.value)}
+            className={errors.customer_email ? "border-red-500" : ""}
+          />
+          {errors.customer_email && (
+            <p className="text-xs text-red-500 mt-1">
+              {errors.customer_email}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* 住所 */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div>
           <Label>
             郵便番号 <span className="text-red-500">*</span>
@@ -194,8 +256,6 @@ export function CustomerSection({
             <p className="text-xs text-red-500 mt-1">{errors.postal_code}</p>
           )}
         </div>
-
-        {/* 都道府県 */}
         <div>
           <Label>
             都道府県 <span className="text-red-500">*</span>
@@ -206,8 +266,6 @@ export function CustomerSection({
             className={errors.prefecture ? "border-red-500" : ""}
           />
         </div>
-
-        {/* 住所１ */}
         <div className="md:col-span-2">
           <Label>
             住所１ <span className="text-red-500">*</span>
@@ -223,58 +281,13 @@ export function CustomerSection({
             </p>
           )}
         </div>
-
-        {/* 住所２ */}
-        <div className="md:col-span-2">
-          <Label>住所２（建物名・部屋番号）</Label>
-          <Input
-            value={values.customer_address2}
-            onChange={(e) => onChange("customer_address2", e.target.value)}
-          />
-        </div>
-
-        {/* 会社名 */}
-        <div>
-          <Label>会社名</Label>
-          <Input
-            value={values.customer_company}
-            onChange={(e) => onChange("customer_company", e.target.value)}
-          />
-        </div>
-
-        {/* 部署名 */}
-        <div>
-          <Label>部署名</Label>
-          <Input
-            value={values.customer_department}
-            onChange={(e) => onChange("customer_department", e.target.value)}
-          />
-        </div>
-
-        {/* 電話番号 */}
-        <div>
-          <Label>電話番号</Label>
-          <Input
-            value={values.customer_phone}
-            onChange={(e) => onChange("customer_phone", e.target.value)}
-          />
-        </div>
-
-        {/* メールアドレス */}
-        <div>
-          <Label>メールアドレス</Label>
-          <Input
-            type="email"
-            value={values.customer_email}
-            onChange={(e) => onChange("customer_email", e.target.value)}
-            className={errors.customer_email ? "border-red-500" : ""}
-          />
-          {errors.customer_email && (
-            <p className="text-xs text-red-500 mt-1">
-              {errors.customer_email}
-            </p>
-          )}
-        </div>
+      </div>
+      <div>
+        <Label>住所２（建物名・部屋番号）</Label>
+        <Input
+          value={values.customer_address2}
+          onChange={(e) => onChange("customer_address2", e.target.value)}
+        />
       </div>
     </div>
   );
