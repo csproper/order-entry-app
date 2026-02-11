@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -17,18 +18,35 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { ArrowLeft, Trash2, Loader2 } from "lucide-react";
+import { ArrowLeft, Trash2, Loader2, Pencil } from "lucide-react";
 import type { Database } from "@/lib/supabase/types";
 
 type Order = Database["public"]["Tables"]["orders"]["Row"];
 type OrderDetail = Database["public"]["Tables"]["order_details"]["Row"];
+
+function StatusBadge({ status }: { status: string }) {
+  if (status === "CSV出力済み") {
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+        CSV出力済み
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+      未出力
+    </span>
+  );
+}
 
 export default function OrderDetailPage() {
   const router = useRouter();
   const params = useParams();
   const id = params.id as string;
 
-  const [order, setOrder] = useState<Order | null>(null);
+  const [order, setOrder] = useState<(Order & { status?: string }) | null>(
+    null
+  );
   const [details, setDetails] = useState<OrderDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
@@ -83,6 +101,8 @@ export default function OrderDetailPage() {
     );
   }
 
+  const isExported = order.status === "CSV出力済み";
+
   return (
     <div className="space-y-6">
       {/* ヘッダー */}
@@ -95,35 +115,53 @@ export default function OrderDetailPage() {
           <h1 className="text-2xl font-bold font-mono">
             {order.order_number}
           </h1>
+          <StatusBadge status={order.status || "未出力"} />
         </div>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="destructive" size="sm">
-              <Trash2 className="h-4 w-4 mr-1" />
-              削除
+        <div className="flex items-center gap-2">
+          {!isExported && (
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/orders/${id}/edit`}>
+                <Pencil className="h-4 w-4 mr-1" />
+                編集
+              </Link>
             </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>この受注を削除しますか？</AlertDialogTitle>
-              <AlertDialogDescription>
-                受注番号 {order.order_number}{" "}
-                を削除します。この操作は取り消せません。
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>キャンセル</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleDelete}
-                disabled={deleting}
-                className="bg-red-600 hover:bg-red-700"
-              >
-                {deleting ? "削除中..." : "削除する"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+          )}
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" size="sm">
+                <Trash2 className="h-4 w-4 mr-1" />
+                削除
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>この受注を削除しますか？</AlertDialogTitle>
+                <AlertDialogDescription>
+                  受注番号 {order.order_number}{" "}
+                  を削除します。この操作は取り消せません。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>キャンセル</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="bg-red-600 hover:bg-red-700"
+                >
+                  {deleting ? "削除中..." : "削除する"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
       </div>
+
+      {/* CSV出力済み注意 */}
+      {isExported && (
+        <div className="p-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg">
+          この受注はCSV出力済みです。編集するには、ステータスを戻す必要があります。
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左: 注文情報 */}
@@ -189,7 +227,8 @@ export default function OrderDetailPage() {
                   </div>
                   <div className="text-sm text-gray-600 grid grid-cols-3 gap-2">
                     <div>
-                      単価: ¥{detail.unit_price.toLocaleString()} × {detail.quantity}
+                      単価: ¥{detail.unit_price.toLocaleString()} ×{" "}
+                      {detail.quantity}
                     </div>
                     <div>送料: ¥{detail.shipping_fee.toLocaleString()}</div>
                     <div>
@@ -286,6 +325,12 @@ export default function OrderDetailPage() {
             </CardHeader>
             <CardContent>
               <dl className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <dt className="text-gray-500">ステータス</dt>
+                  <dd>
+                    <StatusBadge status={order.status || "未出力"} />
+                  </dd>
+                </div>
                 <div className="flex justify-between">
                   <dt className="text-gray-500">受注日時</dt>
                   <dd>

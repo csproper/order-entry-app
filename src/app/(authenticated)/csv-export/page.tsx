@@ -6,27 +6,31 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Download, Loader2 } from "lucide-react";
+import { Download, Loader2, Search, CheckCircle } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export default function CsvExportPage() {
-  // デフォルト: 今月1日〜今日
   const today = new Date();
   const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
   const formatDate = (d: Date) => d.toISOString().split("T")[0];
 
   const [startDate, setStartDate] = useState(formatDate(firstDay));
   const [endDate, setEndDate] = useState(formatDate(today));
+  const [statusFilter, setStatusFilter] = useState("未出力");
   const [loading, setLoading] = useState(false);
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [lastExportedCount, setLastExportedCount] = useState<number | null>(
+    null
+  );
 
-  // プレビュー（件数確認）
   const handlePreview = async () => {
     if (!startDate || !endDate) {
       toast.error("開始日と終了日を指定してください");
       return;
     }
     setPreviewLoading(true);
+    setLastExportedCount(null);
     try {
       const res = await fetch("/api/csv/export", {
         method: "POST",
@@ -34,6 +38,8 @@ export default function CsvExportPage() {
         body: JSON.stringify({
           start_date: startDate,
           end_date: endDate,
+          status_filter: statusFilter || "all",
+          preview: true,
         }),
       });
 
@@ -47,9 +53,8 @@ export default function CsvExportPage() {
         throw new Error(err.error || "プレビューに失敗しました");
       }
 
-      // CSVの行数からデータ件数を計算（ヘッダー1行を除外）
       const text = await res.text();
-      const lines = text.trim().split("\n").length - 1; // BOM+ヘッダー除外
+      const lines = text.trim().split("\n").length - 1;
       setPreviewCount(lines);
     } catch (err: unknown) {
       const message =
@@ -61,7 +66,6 @@ export default function CsvExportPage() {
     }
   };
 
-  // CSV出力（ダウンロード）
   const handleExport = async () => {
     if (!startDate || !endDate) {
       toast.error("開始日と終了日を指定してください");
@@ -75,6 +79,8 @@ export default function CsvExportPage() {
         body: JSON.stringify({
           start_date: startDate,
           end_date: endDate,
+          status_filter: statusFilter || "all",
+          // preview: false → ステータスを「CSV出力済み」に更新する
         }),
       });
 
@@ -88,9 +94,15 @@ export default function CsvExportPage() {
         throw new Error(err.error || "CSV出力に失敗しました");
       }
 
+      // 出力件数を取得
+      const exportedCount = parseInt(
+        res.headers.get("X-Exported-Count") || "0"
+      );
+
       // ファイルダウンロード
       const blob = await res.blob();
-      const contentDisposition = res.headers.get("Content-Disposition") || "";
+      const contentDisposition =
+        res.headers.get("Content-Disposition") || "";
       const filenameMatch = contentDisposition.match(/filename="(.+)"/);
       const filename = filenameMatch ? filenameMatch[1] : "orders.csv";
 
@@ -103,7 +115,11 @@ export default function CsvExportPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      toast.success("CSVファイルをダウンロードしました");
+      setLastExportedCount(exportedCount);
+      setPreviewCount(null);
+      toast.success(
+        `CSVファイルをダウンロードしました（${exportedCount}件の受注をCSV出力済みに更新）`
+      );
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "CSV出力に失敗しました";
@@ -112,6 +128,12 @@ export default function CsvExportPage() {
       setLoading(false);
     }
   };
+
+  const statusOptions = [
+    { value: "未出力", label: "未出力のみ" },
+    { value: "all", label: "すべて（再出力含む）" },
+    { value: "CSV出力済み", label: "出力済みのみ" },
+  ];
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -122,6 +144,7 @@ export default function CsvExportPage() {
           <CardTitle className="text-base">出力条件</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* 日付範囲 */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>開始日</Label>
@@ -131,6 +154,7 @@ export default function CsvExportPage() {
                 onChange={(e) => {
                   setStartDate(e.target.value);
                   setPreviewCount(null);
+                  setLastExportedCount(null);
                 }}
               />
             </div>
@@ -142,15 +166,45 @@ export default function CsvExportPage() {
                 onChange={(e) => {
                   setEndDate(e.target.value);
                   setPreviewCount(null);
+                  setLastExportedCount(null);
                 }}
               />
             </div>
           </div>
 
-          <div className="text-sm text-gray-500">
-            商品コード「9999」の明細は自動的に除外されます。
+          {/* ステータスフィルター */}
+          <div>
+            <Label className="mb-2 block">ステータス</Label>
+            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+              {statusOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    setStatusFilter(opt.value);
+                    setPreviewCount(null);
+                    setLastExportedCount(null);
+                  }}
+                  className={cn(
+                    "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+                    statusFilter === opt.value
+                      ? "bg-white text-gray-900 shadow-sm"
+                      : "text-gray-600 hover:text-gray-900"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
+          <div className="text-sm text-gray-500 space-y-1">
+            <p>商品コード「9999」の明細は自動的に除外されます。</p>
+            <p className="text-amber-600">
+              CSV出力を実行すると、対象受注のステータスが「CSV出力済み」に自動更新されます。
+            </p>
+          </div>
+
+          {/* プレビュー */}
           <div className="flex items-center gap-3">
             <Button
               variant="outline"
@@ -163,7 +217,10 @@ export default function CsvExportPage() {
                   確認中...
                 </>
               ) : (
-                "件数を確認"
+                <>
+                  <Search className="mr-2 h-4 w-4" />
+                  件数を確認
+                </>
               )}
             </Button>
 
@@ -175,12 +232,24 @@ export default function CsvExportPage() {
                   </span>
                 ) : (
                   <span>
-                    出力対象: <strong>{previewCount}</strong> 明細行
+                    出力対象:{" "}
+                    <strong className="text-gray-900">{previewCount}</strong>{" "}
+                    明細行
                   </span>
                 )}
               </span>
             )}
           </div>
+
+          {/* 前回出力結果 */}
+          {lastExportedCount !== null && (
+            <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+              <CheckCircle className="h-4 w-4 shrink-0" />
+              <span>
+                {lastExportedCount}件の受注を「CSV出力済み」に更新しました
+              </span>
+            </div>
+          )}
         </CardContent>
       </Card>
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 // CSV項目ヘッダー（全55列）
 const CSV_HEADERS = [
@@ -68,13 +69,12 @@ function formatDatetime(isoString: string): string {
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "";
-  return dateStr; // YYYY-MM-DD形式のまま
+  return dateStr;
 }
 
 function escapeCsvField(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "";
   const str = String(value);
-  // カンマ、ダブルクオート、改行を含む場合はダブルクオートで囲む
   if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
     return `"${str.replace(/"/g, '""')}"`;
   }
@@ -87,6 +87,7 @@ function boolToText(flag: boolean | null): string {
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
+  const adminClient = createAdminClient();
 
   // 認証チェック
   const {
@@ -107,7 +108,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { start_date, end_date } = body;
+  const { start_date, end_date, status_filter, preview } = body;
   if (!start_date || !end_date) {
     return NextResponse.json(
       { error: "開始日と終了日を指定してください" },
@@ -115,16 +116,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 日付範囲で受注を取得（end_dateは当日末まで含む）
+  // 日付範囲で受注を取得
   const endDateEnd = `${end_date}T23:59:59.999+09:00`;
   const startDateBegin = `${start_date}T00:00:00.000+09:00`;
 
-  const { data: orders, error: ordersError } = await supabase
+  let query = supabase
     .from("orders")
     .select("*")
     .gte("order_datetime", startDateBegin)
     .lte("order_datetime", endDateEnd)
     .order("order_datetime", { ascending: true });
+
+  // ステータスフィルター
+  if (status_filter && status_filter !== "all") {
+    query = query.eq("status", status_filter);
+  }
+
+  const { data: orders, error: ordersError } = await query;
 
   if (ordersError) {
     return NextResponse.json(
@@ -146,7 +154,7 @@ export async function POST(request: NextRequest) {
     .from("order_details")
     .select("*")
     .in("order_id", orderIds)
-    .neq("product_code", "9999") // 商品コード9999を除外
+    .neq("product_code", "9999")
     .order("line_number", { ascending: true });
 
   if (detailsError) {
@@ -167,77 +175,91 @@ export async function POST(request: NextRequest) {
 
   // CSV行を生成
   const rows: string[] = [];
-
-  // ヘッダー行
   rows.push(CSV_HEADERS.map(escapeCsvField).join(","));
 
-  // データ行（明細展開方式）
+  // 出力対象の受注IDを収集（明細がある受注のみ）
+  const exportedOrderIds: string[] = [];
+
   for (const order of orders) {
     const details = detailsByOrder.get(order.id) || [];
-
-    // 9999除外後に明細がない場合はスキップ
     if (details.length === 0) continue;
+
+    exportedOrderIds.push(order.id);
 
     for (const detail of details) {
       const row = [
-        order.order_number,                           // 1: 受注番号
-        formatDatetime(order.order_datetime),          // 2: 受注日
-        "電話",                                        // 3: 受注チャネル（固定値）
-        order.operator_email,                          // 4: 受注担当者メール
-        order.operator_name,                           // 5: 受注担当者名
-        order.customer_name,                           // 6: 注文者氏名
-        order.customer_name_kana,                      // 7: 注文者氏名カナ
-        order.customer_phone,                          // 8: 注文者電話番号
-        order.customer_email,                          // 9: 注文者メール
-        order.postal_code,                             // 10: 注文者郵便番号
-        order.prefecture,                              // 11: 注文者都道府県
-        order.customer_address1,                       // 12: 注文者住所１
-        order.customer_address2,                       // 13: 注文者住所２
-        order.customer_company,                        // 14: 注文者会社名
-        order.customer_department,                     // 15: 注文者部署名
-        order.payment_method,                          // 16: 支払方法
-        order.order_memo,                              // 17: 受注メモ
-        detail.line_number,                            // 18: 明細行番号
-        detail.product_code,                           // 19: 商品コード
-        detail.product_name,                           // 20: 商品名
-        "",                                            // 21: SKU（未使用）
-        detail.unit_price,                             // 22: 単価（税込）
-        detail.quantity,                               // 23: 数量
-        detail.line_total,                             // 24: 明細金額（税込）
-        detail.delivery_name,                          // 25: お届け先氏名
-        detail.delivery_name_kana,                     // 26: お届け先氏名カナ
-        detail.delivery_phone,                         // 27: お届け先電話番号
-        detail.delivery_postal_code,                   // 28: お届け先郵便番号
-        detail.delivery_prefecture,                    // 29: お届け先都道府県
-        detail.delivery_address1,                      // 30: お届け先住所１
-        detail.delivery_address2,                      // 31: お届け先住所２
-        detail.delivery_company,                       // 32: お届け先会社名
-        detail.delivery_department,                    // 33: お届け先部署名
-        formatDate(detail.delivery_date),              // 34: お届け希望日
-        detail.delivery_time,                          // 35: お届け時間帯
-        detail.delivery_method,                        // 36: 配送方法
-        detail.shipping_fee,                           // 37: 送料（税込）
-        detail.delivery_memo,                          // 38: 配送メモ
-        boolToText(detail.noshi_flag),                 // 39: 熨斗あり
-        detail.noshi_position,                         // 40: 熨斗位置
-        detail.noshi_type,                             // 41: 熨斗種類（選択）
-        detail.noshi_inscription_custom,               // 42: 熨斗種類（自由入力）
-        detail.noshi_inscription,                      // 43: 熨斗表書き
-        detail.noshi_name,                             // 44: 熨斗名入れ
-        boolToText(detail.wrapping_flag),              // 45: ギフト包装
-        detail.wrapping_type,                          // 46: ラッピング種別
-        detail.wrapping_fee,                           // 47: ラッピング料（税込）
-        detail.message_card,                           // 48: メッセージカード
-        detail.line_memo,                              // 49: 明細メモ
-        order.subtotal,                                // 50: 受注小計（税込）
-        order.total_shipping_fee,                      // 51: 受注送料合計（税込）
-        order.total_wrapping_fee,                      // 52: 受注ラッピング料合計（税込）
-        order.total_fee,                               // 53: 手数料合計（税込）
-        order.discount > 0 ? -order.discount : 0,      // 54: 値引き（マイナス値で出力）
-        order.total_amount,                            // 55: 受注合計（税込）
+        order.order_number,
+        formatDatetime(order.order_datetime),
+        "電話",
+        order.operator_email,
+        order.operator_name,
+        order.customer_name,
+        order.customer_name_kana,
+        order.customer_phone,
+        order.customer_email,
+        order.postal_code,
+        order.prefecture,
+        order.customer_address1,
+        order.customer_address2,
+        order.customer_company,
+        order.customer_department,
+        order.payment_method,
+        order.order_memo,
+        detail.line_number,
+        detail.product_code,
+        detail.product_name,
+        "",
+        detail.unit_price,
+        detail.quantity,
+        detail.line_total,
+        detail.delivery_name,
+        detail.delivery_name_kana,
+        detail.delivery_phone,
+        detail.delivery_postal_code,
+        detail.delivery_prefecture,
+        detail.delivery_address1,
+        detail.delivery_address2,
+        detail.delivery_company,
+        detail.delivery_department,
+        formatDate(detail.delivery_date),
+        detail.delivery_time,
+        detail.delivery_method,
+        detail.shipping_fee,
+        detail.delivery_memo,
+        boolToText(detail.noshi_flag),
+        detail.noshi_position,
+        detail.noshi_type,
+        detail.noshi_inscription_custom,
+        detail.noshi_inscription,
+        detail.noshi_name,
+        boolToText(detail.wrapping_flag),
+        detail.wrapping_type,
+        detail.wrapping_fee,
+        detail.message_card,
+        detail.line_memo,
+        order.subtotal,
+        order.total_shipping_fee,
+        order.total_wrapping_fee,
+        order.total_fee,
+        order.discount > 0 ? -order.discount : 0,
+        order.total_amount,
       ];
 
       rows.push(row.map(escapeCsvField).join(","));
+    }
+  }
+
+  // プレビューモードの場合はステータス更新しない
+  if (!preview && exportedOrderIds.length > 0) {
+    // 出力した受注のステータスを「CSV出力済み」に更新
+    const { error: updateError } = await adminClient
+      .from("orders")
+      .update({ status: "CSV出力済み" })
+      .in("id", exportedOrderIds);
+
+    if (updateError) {
+      console.error("ステータス更新エラー:", updateError.message);
+      // CSVは出力済みなので、エラーでも処理は続行
     }
   }
 
@@ -245,7 +267,6 @@ export async function POST(request: NextRequest) {
   const BOM = "\uFEFF";
   const csvContent = BOM + rows.join("\r\n") + "\r\n";
 
-  // ファイル名生成
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const filename = `orders_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.csv`;
@@ -255,6 +276,7 @@ export async function POST(request: NextRequest) {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="${filename}"`,
+      "X-Exported-Count": String(exportedOrderIds.length),
     },
   });
 }

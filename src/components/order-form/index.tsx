@@ -28,8 +28,14 @@ interface AppSettings {
   earlyPriceDeadline: string;
 }
 
+let keyCounter = 0;
+function generateKey(): string {
+  return `detail_${Date.now()}_${++keyCounter}`;
+}
+
 function createEmptyDetail(): DetailValues {
   return {
+    _key: generateKey(),
     product_code: "",
     product_name: "",
     unit_price: 0,
@@ -61,50 +67,120 @@ function createEmptyDetail(): DetailValues {
   };
 }
 
+// DB明細 → フォーム用DetailValuesに変換
+function detailFromDb(d: any): DetailValues {
+  return {
+    _key: generateKey(),
+    product_code: d.product_code || "",
+    product_name: d.product_name || "",
+    unit_price: d.unit_price || 0,
+    quantity: d.quantity || 1,
+    is_free_shipping: false,
+    noshi_available: true,
+    wrapping_available: true,
+    delivery_name: d.delivery_name || "",
+    delivery_name_kana: d.delivery_name_kana || "",
+    delivery_phone: d.delivery_phone || "",
+    delivery_postal_code: d.delivery_postal_code || "",
+    delivery_prefecture: d.delivery_prefecture || "",
+    delivery_address1: d.delivery_address1 || "",
+    delivery_address2: d.delivery_address2 || "",
+    delivery_company: d.delivery_company || "",
+    delivery_department: d.delivery_department || "",
+    delivery_date: d.delivery_date || "",
+    delivery_time: d.delivery_time || "",
+    delivery_method: d.delivery_method || "",
+    delivery_memo: d.delivery_memo || "",
+    noshi_type: d.noshi_type || "なし",
+    noshi_position: d.noshi_position || "内のし",
+    noshi_inscription: d.noshi_inscription || "御歳暮",
+    noshi_inscription_custom: d.noshi_inscription_custom || "",
+    noshi_name: d.noshi_name || "",
+    wrapping_type: d.wrapping_type || "なし",
+    message_card: d.message_card || "",
+    line_memo: d.line_memo || "",
+  };
+}
+
 interface OrderFormProps {
   operatorName: string;
   operatorEmail: string;
   settings: AppSettings;
+  mode?: "create" | "edit";
+  orderId?: string;
+  initialOrder?: any;
+  initialDetails?: any[];
 }
 
 export function OrderForm({
   operatorName,
   operatorEmail,
   settings,
+  mode = "create",
+  orderId,
+  initialOrder,
+  initialDetails,
 }: OrderFormProps) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
 
-  // 下書き管理
+  // 下書き管理（新規モードのみ）
   const { hasDraft, draftSavedAt, checked, loadDraft, saveDraft, clearDraft } =
     useDraftOrder();
 
-  // initialized: 下書き判定後にフォーム入力＆自動保存を開始するフラグ
-  const [initialized, setInitialized] = useState(false);
+  const [initialized, setInitialized] = useState(mode === "edit");
 
   // 注文者情報
-  const [customer, setCustomer] = useState({
-    customer_code: "",
-    customer_name: "",
-    customer_name_kana: "",
-    postal_code: "",
-    prefecture: "",
-    customer_address1: "",
-    customer_address2: "",
-    customer_company: "",
-    customer_department: "",
-    customer_phone: "",
-    customer_email: "",
+  const [customer, setCustomer] = useState(() => {
+    if (mode === "edit" && initialOrder) {
+      return {
+        customer_code: initialOrder.customer_code || "",
+        customer_name: initialOrder.customer_name || "",
+        customer_name_kana: initialOrder.customer_name_kana || "",
+        postal_code: initialOrder.postal_code || "",
+        prefecture: initialOrder.prefecture || "",
+        customer_address1: initialOrder.customer_address1 || "",
+        customer_address2: initialOrder.customer_address2 || "",
+        customer_company: initialOrder.customer_company || "",
+        customer_department: initialOrder.customer_department || "",
+        customer_phone: initialOrder.customer_phone || "",
+        customer_email: initialOrder.customer_email || "",
+      };
+    }
+    return {
+      customer_code: "",
+      customer_name: "",
+      customer_name_kana: "",
+      postal_code: "",
+      prefecture: "",
+      customer_address1: "",
+      customer_address2: "",
+      customer_company: "",
+      customer_department: "",
+      customer_phone: "",
+      customer_email: "",
+    };
   });
 
-  // 支払方法・値引き・メモ
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("代金引換");
-  const [discount, setDiscount] = useState(0);
-  const [orderMemo, setOrderMemo] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() =>
+    mode === "edit" && initialOrder
+      ? (initialOrder.payment_method as PaymentMethod)
+      : "代金引換"
+  );
+  const [discount, setDiscount] = useState(() =>
+    mode === "edit" && initialOrder ? initialOrder.discount : 0
+  );
+  const [orderMemo, setOrderMemo] = useState(() =>
+    mode === "edit" && initialOrder ? initialOrder.order_memo || "" : ""
+  );
 
-  // 明細
-  const [details, setDetails] = useState<DetailValues[]>([]);
+  const [details, setDetails] = useState<DetailValues[]>(() => {
+    if (mode === "edit" && initialDetails) {
+      return initialDetails.map(detailFromDb);
+    }
+    return [];
+  });
 
   // 早割判定
   const isEarlyPrice = useMemo(() => {
@@ -112,46 +188,42 @@ export function OrderForm({
     return new Date() <= deadline;
   }, [settings.earlyPriceDeadline]);
 
-  // checkedかつ下書きなし → 自動でinitialize
+  // 新規モード: checkedかつ下書きなし → initialize
   useEffect(() => {
-    if (checked && !hasDraft) {
+    if (mode === "create" && checked && !hasDraft) {
       setInitialized(true);
     }
-  }, [checked, hasDraft]);
+  }, [mode, checked, hasDraft]);
 
   // 下書き復元
   const restoreDraft = useCallback(() => {
     const draft = loadDraft();
     if (!draft) return;
-
     setCustomer(draft.customer);
     setPaymentMethod(draft.paymentMethod as PaymentMethod);
     setDiscount(draft.discount);
     setOrderMemo(draft.orderMemo);
-    setDetails(draft.details);
+    setDetails(
+      draft.details.map((d: any) => ({
+        ...d,
+        _key: d._key || generateKey(),
+      }))
+    );
     setInitialized(true);
-
     toast.success("下書きを復元しました");
   }, [loadDraft]);
 
-  // 下書き破棄
   const discardDraft = useCallback(() => {
     clearDraft();
     setInitialized(true);
     toast.info("下書きを破棄しました");
   }, [clearDraft]);
 
-  // 自動保存: state変更のたびに保存（initialized後のみ）
+  // 自動保存（新規モード・initialized後のみ）
   useEffect(() => {
-    if (!initialized) return;
-    saveDraft({
-      customer,
-      paymentMethod,
-      discount,
-      orderMemo,
-      details,
-    });
-  }, [customer, paymentMethod, discount, orderMemo, details, initialized, saveDraft]);
+    if (mode !== "create" || !initialized) return;
+    saveDraft({ customer, paymentMethod, discount, orderMemo, details });
+  }, [customer, paymentMethod, discount, orderMemo, details, initialized, saveDraft, mode]);
 
   // 注文者フィールド変更
   const handleCustomerChange = useCallback(
@@ -202,12 +274,10 @@ export function OrderForm({
     [errors]
   );
 
-  // 明細削除
   const handleDetailRemove = useCallback((index: number) => {
     setDetails((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  // 注文者情報→お届け先コピー
   const handleCopyDeliveryFromOrder = useCallback(
     (index: number) => {
       setDetails((prev) => {
@@ -230,7 +300,7 @@ export function OrderForm({
     [customer]
   );
 
-  // 金額計算（リアルタイム）
+  // 金額計算
   const calcResult = useMemo(() => {
     if (details.length === 0) {
       return {
@@ -293,7 +363,6 @@ export function OrderForm({
     }
 
     if (
-      paymentMethod === "クレジットカード" &&
       customer.customer_email &&
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer.customer_email)
     ) {
@@ -354,9 +423,10 @@ export function OrderForm({
           )}
         </div>
       );
-
       setTimeout(() => {
-        const firstError = document.querySelector(".border-red-500, [data-error='true']");
+        const firstError = document.querySelector(
+          ".border-red-500, [data-error='true']"
+        );
         if (firstError) {
           firstError.scrollIntoView({ behavior: "smooth", block: "center" });
         }
@@ -414,8 +484,11 @@ export function OrderForm({
         })),
       };
 
-      const res = await fetch("/api/orders", {
-        method: "POST",
+      const url = mode === "edit" ? `/api/orders/${orderId}` : "/api/orders";
+      const method = mode === "edit" ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -430,17 +503,22 @@ export function OrderForm({
             }
           }
           if (serverErrors.length > 0) {
-            throw new Error(`サーバーバリデーションエラー\n${serverErrors.join("\n")}`);
+            throw new Error(serverErrors.join("\n"));
           }
         }
         throw new Error(err.error || "保存に失敗しました");
       }
 
-      // 保存成功 → 下書きを削除
-      clearDraft();
+      if (mode === "create") {
+        clearDraft();
+      }
 
       const data = await res.json();
-      toast.success(`受注 ${data.order_number} を登録しました`);
+      const msg =
+        mode === "edit"
+          ? `受注 ${data.order_number} を更新しました`
+          : `受注 ${data.order_number} を登録しました`;
+      toast.success(msg);
       router.push(`/orders/${data.id}`);
     } catch (err: unknown) {
       const message =
@@ -460,15 +538,17 @@ export function OrderForm({
     });
   };
 
-  // localStorageチェック完了まで待機
-  if (!checked) {
+  // 新規モード: localStorageチェック待機
+  if (mode === "create" && !checked) {
     return (
-      <div className="text-center py-12 text-gray-400 text-sm">読み込み中...</div>
+      <div className="text-center py-12 text-gray-400 text-sm">
+        読み込み中...
+      </div>
     );
   }
 
-  // 下書きあり＆まだ選択していない → バナーのみ表示
-  if (hasDraft && !initialized) {
+  // 新規モード: 下書きバナー
+  if (mode === "create" && hasDraft && !initialized) {
     return (
       <div className="flex items-center justify-between gap-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
         <div className="flex items-center gap-3">
@@ -507,10 +587,8 @@ export function OrderForm({
     );
   }
 
-  // フォーム本体
   return (
     <div className="flex gap-6">
-      {/* 左: フォーム */}
       <div className="flex-1 space-y-6">
         {/* 注文者情報 */}
         <Card>
@@ -546,7 +624,7 @@ export function OrderForm({
         <div className="space-y-4">
           {details.map((detail, index) => (
             <DetailItem
-              key={index}
+              key={detail._key}
               index={index}
               values={detail}
               lineTotal={calcResult.lineTotals[index] ?? 0}
@@ -613,7 +691,14 @@ export function OrderForm({
 
         {/* 保存ボタン */}
         <div className="flex justify-end gap-3 pb-8">
-          <Button variant="outline" onClick={() => router.push("/")}>
+          <Button
+            variant="outline"
+            onClick={() =>
+              mode === "edit"
+                ? router.push(`/orders/${orderId}`)
+                : router.push("/")
+            }
+          >
             キャンセル
           </Button>
           <Button
@@ -624,12 +709,12 @@ export function OrderForm({
             {saving ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                保存中...
+                {mode === "edit" ? "更新中..." : "保存中..."}
               </>
             ) : (
               <>
                 <Save className="mr-2 h-4 w-4" />
-                受注を登録
+                {mode === "edit" ? "受注を更新" : "受注を登録"}
               </>
             )}
           </Button>

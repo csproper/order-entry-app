@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,12 +13,12 @@ import {
 import { Search, X, SlidersHorizontal, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// フィルター状態の型
 export interface OrderFilters {
-  quickFilter: string; // "all" | "today" | "week" | "month"
+  quickFilter: string;
   searchQuery: string;
   operatorName: string;
   paymentMethod: string;
+  status: string;
   dateFrom: string;
   dateTo: string;
 }
@@ -28,6 +28,7 @@ const INITIAL_FILTERS: OrderFilters = {
   searchQuery: "",
   operatorName: "",
   paymentMethod: "",
+  status: "",
   dateFrom: "",
   dateTo: "",
 };
@@ -38,7 +39,6 @@ interface OrderFilterBarProps {
   operators: string[];
   totalCount: number;
   filteredCount: number;
-  currentOperatorName?: string;
 }
 
 export function OrderFilterBar({
@@ -47,19 +47,16 @@ export function OrderFilterBar({
   operators,
   totalCount,
   filteredCount,
-  currentOperatorName,
 }: OrderFilterBarProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const updateFilter = useCallback(
     (key: keyof OrderFilters, value: string) => {
       const updated = { ...filters, [key]: value };
-      // クイックフィルター選択時は日付範囲をクリア
       if (key === "quickFilter" && value !== "custom") {
         updated.dateFrom = "";
         updated.dateTo = "";
       }
-      // 日付を手動設定したらクイックフィルターをcustomに
       if (key === "dateFrom" || key === "dateTo") {
         updated.quickFilter = "custom";
       }
@@ -78,6 +75,7 @@ export function OrderFilterBar({
     filters.searchQuery !== "" ||
     filters.operatorName !== "" ||
     filters.paymentMethod !== "" ||
+    filters.status !== "" ||
     filters.dateFrom !== "" ||
     filters.dateTo !== "";
 
@@ -89,9 +87,6 @@ export function OrderFilterBar({
   ];
 
   const paymentMethods = ["代金引換", "クレジットカード", "銀行振込", "後払い"];
-
-  // 担当者ドロップダウンの表示値
-  const operatorDisplayValue = filters.operatorName || "all";
 
   return (
     <div className="space-y-3">
@@ -115,6 +110,28 @@ export function OrderFilterBar({
           ))}
         </div>
 
+        {/* ステータスフィルター */}
+        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+          {[
+            { value: "", label: "全ステータス" },
+            { value: "未出力", label: "未出力" },
+            { value: "CSV出力済み", label: "出力済み" },
+          ].map((sf) => (
+            <button
+              key={sf.value}
+              onClick={() => updateFilter("status", sf.value)}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+                filters.status === sf.value
+                  ? "bg-white text-gray-900 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900"
+              )}
+            >
+              {sf.label}
+            </button>
+          ))}
+        </div>
+
         {/* 検索ボックス */}
         <div className="relative flex-1 min-w-0 w-full sm:w-auto sm:max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -134,23 +151,6 @@ export function OrderFilterBar({
           )}
         </div>
 
-        {/* 自分が担当ボタン */}
-        {currentOperatorName && (
-          <Button
-            variant={filters.operatorName === currentOperatorName ? "default" : "outline"}
-            size="sm"
-            onClick={() =>
-              updateFilter(
-                "operatorName",
-                filters.operatorName === currentOperatorName ? "" : currentOperatorName
-              )
-            }
-            className="gap-1.5 text-xs"
-          >
-            自分が担当
-          </Button>
-        )}
-
         {/* 詳細フィルタートグル */}
         <Button
           variant="outline"
@@ -162,10 +162,9 @@ export function OrderFilterBar({
           )}
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />
-          詳細フィルター
+          詳細
         </Button>
 
-        {/* クリアボタン */}
         {hasActiveFilters && (
           <Button
             variant="ghost"
@@ -179,43 +178,40 @@ export function OrderFilterBar({
         )}
       </div>
 
-      {/* 下段: 詳細フィルター（展開時） */}
+      {/* 下段: 詳細フィルター */}
       {showAdvanced && (
         <div className="flex flex-wrap items-end gap-3 p-3 bg-gray-50 rounded-lg border">
-          {/* 担当者 */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-gray-500">担当者</label>
             <Select
-              value={operatorDisplayValue}
-              onValueChange={(v) => updateFilter("operatorName", v === "all" ? "" : v)}
+              value={filters.operatorName || "all"}
+              onValueChange={(v) =>
+                updateFilter("operatorName", v === "all" ? "" : v)
+              }
             >
               <SelectTrigger className="w-40 h-9 text-sm">
                 <SelectValue placeholder="すべて" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">すべて</SelectItem>
-                {currentOperatorName && (
-                  <SelectItem value={currentOperatorName}>
-                    ★ 自分（{currentOperatorName}）
+                {operators.map((op) => (
+                  <SelectItem key={op} value={op}>
+                    {op}
                   </SelectItem>
-                )}
-                {operators
-                  .filter((op) => op !== currentOperatorName)
-                  .map((op) => (
-                    <SelectItem key={op} value={op}>
-                      {op}
-                    </SelectItem>
-                  ))}
+                ))}
               </SelectContent>
             </Select>
           </div>
 
-          {/* 支払方法 */}
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-500">支払方法</label>
+            <label className="text-xs font-medium text-gray-500">
+              支払方法
+            </label>
             <Select
               value={filters.paymentMethod || "all"}
-              onValueChange={(v) => updateFilter("paymentMethod", v === "all" ? "" : v)}
+              onValueChange={(v) =>
+                updateFilter("paymentMethod", v === "all" ? "" : v)
+              }
             >
               <SelectTrigger className="w-44 h-9 text-sm">
                 <SelectValue placeholder="すべて" />
@@ -231,7 +227,6 @@ export function OrderFilterBar({
             </Select>
           </div>
 
-          {/* 日付範囲 */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
               <CalendarDays className="h-3.5 w-3.5" />
@@ -259,7 +254,9 @@ export function OrderFilterBar({
       {/* 件数表示 */}
       {hasActiveFilters && (
         <p className="text-xs text-gray-500">
-          {totalCount}件中 <span className="font-medium text-gray-700">{filteredCount}件</span> を表示
+          {totalCount}件中{" "}
+          <span className="font-medium text-gray-700">{filteredCount}件</span>{" "}
+          を表示
         </p>
       )}
     </div>
@@ -276,7 +273,11 @@ export function applyFilters(
   // クイックフィルター（日付）
   if (filters.quickFilter !== "all" && filters.quickFilter !== "custom") {
     const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
 
     if (filters.quickFilter === "today") {
       result = result.filter(
@@ -285,9 +286,7 @@ export function applyFilters(
     } else if (filters.quickFilter === "week") {
       const weekAgo = new Date(todayStart);
       weekAgo.setDate(weekAgo.getDate() - 7);
-      result = result.filter(
-        (o) => new Date(o.order_datetime) >= weekAgo
-      );
+      result = result.filter((o) => new Date(o.order_datetime) >= weekAgo);
     } else if (filters.quickFilter === "month") {
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       result = result.filter(
@@ -296,14 +295,14 @@ export function applyFilters(
     }
   }
 
-  // 日付範囲フィルター
+  // 日付範囲
   if (filters.dateFrom) {
     const from = new Date(filters.dateFrom);
     result = result.filter((o) => new Date(o.order_datetime) >= from);
   }
   if (filters.dateTo) {
     const to = new Date(filters.dateTo);
-    to.setDate(to.getDate() + 1); // dateTo の日を含む
+    to.setDate(to.getDate() + 1);
     result = result.filter((o) => new Date(o.order_datetime) < to);
   }
 
@@ -317,16 +316,19 @@ export function applyFilters(
     );
   }
 
-  // 担当者フィルター
+  // 担当者
   if (filters.operatorName) {
     result = result.filter((o) => o.operator_name === filters.operatorName);
   }
 
-  // 支払方法フィルター
+  // 支払方法
   if (filters.paymentMethod) {
-    result = result.filter(
-      (o) => o.payment_method === filters.paymentMethod
-    );
+    result = result.filter((o) => o.payment_method === filters.paymentMethod);
+  }
+
+  // ステータス
+  if (filters.status) {
+    result = result.filter((o) => o.status === filters.status);
   }
 
   return result;

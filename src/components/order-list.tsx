@@ -21,6 +21,7 @@ interface Order {
   payment_method: string;
   total_amount: number;
   operator_name: string;
+  status: string;
 }
 
 export function OrderList() {
@@ -28,7 +29,6 @@ export function OrderList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState<OrderFilters>(INITIAL_FILTERS);
-  const [currentOperatorName, setCurrentOperatorName] = useState<string>("");
 
   const supabase = createClient();
 
@@ -38,13 +38,15 @@ export function OrderList() {
     const { data, error: err } = await supabase
       .from("orders")
       .select(
-        "id, order_number, order_datetime, customer_name, payment_method, total_amount, operator_name"
+        "id, order_number, order_datetime, customer_name, payment_method, total_amount, operator_name, status"
       )
       .order("order_datetime", { ascending: false })
       .limit(500);
 
     if (err) {
-      setError("データの取得に失敗しました。テーブルが作成されているか確認してください。");
+      setError(
+        "データの取得に失敗しました。テーブルが作成されているか確認してください。"
+      );
     } else {
       setOrders(data || []);
     }
@@ -53,35 +55,28 @@ export function OrderList() {
 
   useEffect(() => {
     fetchOrders();
-
-    // 現在のログインユーザー名を取得
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) {
-        const name =
-          user.user_metadata?.full_name ||
-          user.user_metadata?.name ||
-          user.email?.split("@")[0] ||
-          "";
-        setCurrentOperatorName(name);
-      }
-    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 担当者一覧を抽出
   const operators = useMemo(() => {
     const names = new Set(orders.map((o) => o.operator_name).filter(Boolean));
     return Array.from(names).sort();
   }, [orders]);
 
-  // フィルター適用
   const filteredOrders = useMemo(
     () => applyFilters(orders, filters),
     [orders, filters]
   );
 
-  // 集計
-  const totalAmount = filteredOrders.reduce((sum, o) => sum + o.total_amount, 0);
+  const totalAmount = filteredOrders.reduce(
+    (sum, o) => sum + o.total_amount,
+    0
+  );
+
+  // ステータス別カウント
+  const unexportedCount = orders.filter(
+    (o) => o.status !== "CSV出力済み"
+  ).length;
 
   return (
     <div className="space-y-4">
@@ -96,7 +91,9 @@ export function OrderList() {
             disabled={loading}
             className="gap-1.5 text-xs"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+            />
             更新
           </Button>
           <Button variant="outline" size="sm" asChild>
@@ -121,7 +118,6 @@ export function OrderList() {
         operators={operators}
         totalCount={orders.length}
         filteredCount={filteredOrders.length}
-        currentOperatorName={currentOperatorName}
       />
 
       {/* サマリーカード */}
@@ -134,11 +130,11 @@ export function OrderList() {
         <SummaryCard
           label="本日の受注"
           value={`${orders.filter((o) => isToday(o.order_datetime)).length}件`}
-          highlight
         />
         <SummaryCard
-          label="担当者数"
-          value={`${operators.length}名`}
+          label="未出力"
+          value={`${unexportedCount}件`}
+          highlight={unexportedCount > 0}
         />
       </div>
 
@@ -172,7 +168,9 @@ export function OrderList() {
                   <p className="text-base mb-2">
                     条件に一致する受注がありません
                   </p>
-                  <p className="text-sm">フィルター条件を変更してみてください</p>
+                  <p className="text-sm">
+                    フィルター条件を変更してみてください
+                  </p>
                 </>
               )}
             </div>
@@ -198,6 +196,9 @@ export function OrderList() {
                     </th>
                     <th className="px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">
                       担当者
+                    </th>
+                    <th className="px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wider">
+                      状態
                     </th>
                   </tr>
                 </thead>
@@ -230,6 +231,9 @@ export function OrderList() {
                       <td className="px-4 py-3 text-gray-600 text-xs">
                         {order.operator_name}
                       </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={order.status} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -256,13 +260,13 @@ function SummaryCard({
   return (
     <div
       className={`rounded-lg border p-3 ${
-        highlight ? "bg-blue-50 border-blue-200" : "bg-white"
+        highlight ? "bg-amber-50 border-amber-200" : "bg-white"
       }`}
     >
       <p className="text-xs text-gray-500 mb-0.5">{label}</p>
       <p
         className={`text-lg font-semibold tabular-nums ${
-          highlight ? "text-blue-700" : "text-gray-900"
+          highlight ? "text-amber-700" : "text-gray-900"
         }`}
       >
         {value}
@@ -284,6 +288,21 @@ function PaymentBadge({ method }: { method: string }) {
       className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${color}`}
     >
       {method}
+    </span>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  if (status === "CSV出力済み") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+        出力済み
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+      未出力
     </span>
   );
 }
