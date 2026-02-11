@@ -1,14 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { Trash2, UserSearch, History, Loader2 } from "lucide-react";
 import { fetchAddressFromPostalCode } from "@/lib/postal-code";
+import type { Database } from "@/lib/supabase/types";
+
+type Customer = Database["public"]["Tables"]["customers"]["Row"];
+
+interface DeliveryHistoryItem {
+  id: number;
+  customer_code: string;
+  delivery_name: string;
+  delivery_postal_code: string;
+  delivery_prefecture: string;
+  delivery_address: string;
+  delivery_phone: string;
+  last_used_at: string | null;
+}
 
 export interface DetailValues {
-  _key: string; // ユニークキー（React key用、DBには保存しない）
+  _key: string;
   product_code: string;
   product_name: string;
   unit_price: number;
@@ -46,6 +60,7 @@ interface DetailItemProps {
   wrappingFee: number;
   shippingFee: number;
   errors: Record<string, string | undefined>;
+  customerCode?: string;
   onChange: (index: number, field: string, value: string | number) => void;
   onRemove: (index: number) => void;
   onCopyDeliveryFromOrder: (index: number) => void;
@@ -72,11 +87,130 @@ export function DetailItem({
   wrappingFee,
   shippingFee,
   errors,
+  customerCode,
   onChange,
   onRemove,
   onCopyDeliveryFromOrder,
 }: DetailItemProps) {
   const [postalLoading, setPostalLoading] = useState(false);
+
+  // お届け先顧客検索
+  const [deliverySearchQuery, setDeliverySearchQuery] = useState("");
+  const [deliverySearchResults, setDeliverySearchResults] = useState<Customer[]>([]);
+  const [isDeliverySearchOpen, setIsDeliverySearchOpen] = useState(false);
+  const [showDeliverySearch, setShowDeliverySearch] = useState(false);
+  const deliverySearchRef = useRef<HTMLDivElement>(null);
+
+  // 過去の配送先
+  const [showDeliveryHistory, setShowDeliveryHistory] = useState(false);
+  const [deliveryHistory, setDeliveryHistory] = useState<DeliveryHistoryItem[]>([]);
+  const [deliveryHistoryLoading, setDeliveryHistoryLoading] = useState(false);
+  const [deliveryHistoryFilter, setDeliveryHistoryFilter] = useState("");
+  const deliveryHistoryRef = useRef<HTMLDivElement>(null);
+
+  // 顧客検索（デバウンス）
+  useEffect(() => {
+    if (deliverySearchQuery.length < 1) {
+      setDeliverySearchResults([]);
+      setIsDeliverySearchOpen(false);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/customers/search?q=${encodeURIComponent(deliverySearchQuery)}`
+        );
+        const data = await res.json();
+        setDeliverySearchResults(data.customers || []);
+        setIsDeliverySearchOpen(true);
+      } catch {
+        setDeliverySearchResults([]);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [deliverySearchQuery]);
+
+  // クリックアウトで閉じる
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        deliverySearchRef.current &&
+        !deliverySearchRef.current.contains(e.target as Node)
+      ) {
+        setIsDeliverySearchOpen(false);
+      }
+      if (
+        deliveryHistoryRef.current &&
+        !deliveryHistoryRef.current.contains(e.target as Node)
+      ) {
+        setShowDeliveryHistory(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleDeliveryCustomerSelect = (customer: Customer) => {
+    onChange(index, "delivery_name", customer.name);
+    onChange(index, "delivery_phone", customer.phone || "");
+    onChange(index, "delivery_postal_code", customer.postal_code);
+    onChange(index, "delivery_prefecture", customer.prefecture);
+    onChange(index, "delivery_address1", customer.address1);
+    onChange(index, "delivery_address2", "");
+    onChange(index, "delivery_company", "");
+    onChange(index, "delivery_department", "");
+    onChange(index, "delivery_name_kana", "");
+    setDeliverySearchQuery("");
+    setIsDeliverySearchOpen(false);
+    setShowDeliverySearch(false);
+  };
+
+  // 過去の配送先を取得
+  const handleOpenDeliveryHistory = async () => {
+    if (showDeliveryHistory) {
+      setShowDeliveryHistory(false);
+      return;
+    }
+    if (!customerCode) return;
+
+    setShowDeliveryHistory(true);
+    setDeliveryHistoryLoading(true);
+    setDeliveryHistoryFilter("");
+    try {
+      const res = await fetch(
+        `/api/delivery-history?customer_code=${encodeURIComponent(customerCode)}`
+      );
+      const data = await res.json();
+      setDeliveryHistory(data.deliveries || []);
+    } catch {
+      setDeliveryHistory([]);
+    } finally {
+      setDeliveryHistoryLoading(false);
+    }
+  };
+
+  const handleDeliveryHistorySelect = (item: DeliveryHistoryItem) => {
+    onChange(index, "delivery_name", item.delivery_name);
+    onChange(index, "delivery_phone", item.delivery_phone || "");
+    onChange(index, "delivery_postal_code", item.delivery_postal_code || "");
+    onChange(index, "delivery_prefecture", item.delivery_prefecture || "");
+    onChange(index, "delivery_address1", item.delivery_address || "");
+    onChange(index, "delivery_address2", "");
+    onChange(index, "delivery_company", "");
+    onChange(index, "delivery_department", "");
+    onChange(index, "delivery_name_kana", "");
+    setShowDeliveryHistory(false);
+  };
+
+  // 過去の配送先のフィルタリング
+  const filteredHistory = deliveryHistoryFilter
+    ? deliveryHistory.filter(
+        (h) =>
+          h.delivery_name.includes(deliveryHistoryFilter) ||
+          h.delivery_address?.includes(deliveryHistoryFilter) ||
+          h.delivery_postal_code?.includes(deliveryHistoryFilter)
+      )
+    : deliveryHistory;
 
   const getError = (field: string) => errors[`detail_${index}_${field}`];
   const hasAnyError = Object.keys(errors).some(
@@ -185,16 +319,152 @@ export function DetailItem({
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <Label className="text-sm font-semibold">お届け先</Label>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onCopyDeliveryFromOrder(index)}
-            className="text-xs h-7"
-          >
-            注文者情報をコピー
-          </Button>
+          <div className="flex items-center gap-2">
+            {customerCode && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleOpenDeliveryHistory}
+                className="text-xs h-7 gap-1.5"
+              >
+                <History className="h-3.5 w-3.5" />
+                過去の配送先
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setShowDeliverySearch(!showDeliverySearch);
+                setShowDeliveryHistory(false);
+                if (showDeliverySearch) {
+                  setDeliverySearchQuery("");
+                  setIsDeliverySearchOpen(false);
+                }
+              }}
+              className="text-xs h-7 gap-1.5"
+            >
+              <UserSearch className="h-3.5 w-3.5" />
+              顧客から選択
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onCopyDeliveryFromOrder(index)}
+              className="text-xs h-7"
+            >
+              注文者情報をコピー
+            </Button>
+          </div>
         </div>
+
+        {/* 過去の配送先リスト */}
+        {showDeliveryHistory && (
+          <div ref={deliveryHistoryRef} className="border rounded-md bg-gray-50 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-600">
+                過去の配送先（顧客コード: {customerCode}）
+              </span>
+              {deliveryHistory.length > 5 && (
+                <Input
+                  type="text"
+                  placeholder="絞り込み..."
+                  value={deliveryHistoryFilter}
+                  onChange={(e) => setDeliveryHistoryFilter(e.target.value)}
+                  className="h-7 text-xs w-48"
+                />
+              )}
+            </div>
+            {deliveryHistoryLoading ? (
+              <div className="flex items-center justify-center py-4 text-gray-400 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                読み込み中...
+              </div>
+            ) : filteredHistory.length === 0 ? (
+              <p className="text-xs text-gray-400 py-2">
+                {deliveryHistory.length === 0
+                  ? "過去の配送先が登録されていません"
+                  : "該当する配送先がありません"}
+              </p>
+            ) : (
+              <div className="max-h-48 overflow-y-auto space-y-1">
+                {filteredHistory.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 text-sm bg-white border rounded hover:bg-blue-50 hover:border-blue-300 transition-colors"
+                    onClick={() => handleDeliveryHistorySelect(item)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{item.delivery_name}</span>
+                      <span className="text-xs text-gray-400 font-mono">
+                        〒{item.delivery_postal_code}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {item.delivery_prefecture}
+                      {item.delivery_address}
+                      {item.delivery_phone && (
+                        <span className="ml-2 text-gray-400">
+                          TEL: {item.delivery_phone}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 顧客検索ドロップダウン */}
+        {showDeliverySearch && (
+          <div ref={deliverySearchRef} className="relative">
+            <Input
+              type="text"
+              placeholder="顧客番号または氏名で検索..."
+              value={deliverySearchQuery}
+              onChange={(e) => setDeliverySearchQuery(e.target.value)}
+              onFocus={() =>
+                deliverySearchQuery.length >= 1 &&
+                deliverySearchResults.length > 0 &&
+                setIsDeliverySearchOpen(true)
+              }
+              autoFocus
+              className="text-sm"
+            />
+            {isDeliverySearchOpen && deliverySearchResults.length > 0 && (
+              <div className="absolute z-50 mt-1 w-full bg-white border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                {deliverySearchResults.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                    onClick={() => handleDeliveryCustomerSelect(c)}
+                  >
+                    <span className="font-mono text-gray-500 mr-2">
+                      {c.code}
+                    </span>
+                    <span>{c.name}</span>
+                    <span className="text-gray-400 ml-2 text-xs">
+                      {c.prefecture}
+                      {c.address1}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {isDeliverySearchOpen && deliverySearchResults.length === 0 && deliverySearchQuery.length >= 1 && (
+              <div className="absolute z-50 mt-1 w-full bg-white border rounded-md shadow-lg px-3 py-2 text-sm text-gray-400">
+                該当する顧客が見つかりません
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
             <Label className="text-xs">

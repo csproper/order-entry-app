@@ -639,7 +639,8 @@ export function OrderForm({
             <DetailItem
               key={detail._key}
               index={index}
-              values={detail}
+values={detail}
+customerCode={customer.customer_code}
               lineTotal={calcResult.lineTotals[index] ?? 0}
               wrappingFee={calcResult.wrappingFees[index] ?? 0}
               shippingFee={calcResult.shippingFees[index] ?? 0}
