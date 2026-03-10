@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export async function GET(request: NextRequest) {
+  // レート制限チェック
+  const rateLimit = await checkRateLimit(request, "customers:search-phone", 20, "minute");
+  if (!rateLimit.success) {
+    return NextResponse.json(
+      { error: "リクエストが多すぎます。しばらく待ってから再試行してください。" },
+      { status: 429 }
+    );
+  }
+
   const supabase = await createClient();
 
   const {
@@ -48,7 +58,8 @@ export async function GET(request: NextRequest) {
     .limit(5);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Database error:", error);
+    return NextResponse.json({ error: "データの取得に失敗しました" }, { status: 500 });
   }
 
   // 配送履歴が見つからない場合

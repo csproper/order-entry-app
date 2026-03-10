@@ -7,8 +7,18 @@ import {
   type DetailForCalc,
 } from "@/lib/calc/order-total";
 import type { PaymentMethod } from "@/lib/calc/payment-fee";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export async function GET(request: NextRequest) {
+  // レート制限チェック
+  const rateLimit = await checkRateLimit(request, "orders:get", 30, "minute");
+  if (!rateLimit.success) {
+    return NextResponse.json(
+      { error: "リクエストが多すぎます。しばらく待ってから再試行してください。" },
+      { status: 429 }
+    );
+  }
+
   const supabase = await createClient();
 
   const {
@@ -33,13 +43,23 @@ export async function GET(request: NextRequest) {
     .range(offset, offset + limit - 1);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Database error:", error);
+    return NextResponse.json({ error: "データの取得に失敗しました" }, { status: 500 });
   }
 
   return NextResponse.json({ orders: data, total: count });
 }
 
 export async function POST(request: NextRequest) {
+  // レート制限チェック（注文作成は厳しめに制限）
+  const rateLimit = await checkRateLimit(request, "orders:create", 10, "minute");
+  if (!rateLimit.success) {
+    return NextResponse.json(
+      { error: "リクエストが多すぎます。しばらく待ってから再試行してください。" },
+      { status: 429 }
+    );
+  }
+
   const supabase = await createClient();
   const adminClient = createAdminClient();
 
@@ -83,6 +103,7 @@ export async function POST(request: NextRequest) {
     .eq("is_active", true);
 
   if (prodError || !products) {
+    console.error("Product fetch error:", prodError);
     return NextResponse.json(
       { error: "商品情報の取得に失敗しました" },
       { status: 500 }
@@ -293,8 +314,9 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (orderError || !orderRow) {
+    console.error("Order creation error:", orderError);
     return NextResponse.json(
-      { error: `受注の登録に失敗しました: ${orderError?.message}` },
+      { error: "受注の登録に失敗しました" },
       { status: 500 }
     );
   }
@@ -315,10 +337,11 @@ export async function POST(request: NextRequest) {
     .insert(cleanedInserts);
 
   if (detailsError) {
+    console.error("Order details error:", detailsError);
     // 明細INSERT失敗時はorderも削除（簡易ロールバック）
     await adminClient.from("orders").delete().eq("id", orderRow.id);
     return NextResponse.json(
-      { error: `明細の登録に失敗しました: ${detailsError.message}` },
+      { error: "明細の登録に失敗しました" },
       { status: 500 }
     );
   }
