@@ -22,12 +22,14 @@ export async function GET(request: NextRequest) {
   const normalizedPhone = phone.replace(/[-\s]/g, "");
   
   // delivery_historyテーブルから最新の配送先情報を取得
+  // データベース側の電話番号もハイフンあり・なし両方の可能性があるため
+  // 複数パターンで検索
   const { data, error } = await supabase
     .from("delivery_history")
     .select("*")
-    .or(`delivery_phone.eq.${phone},delivery_phone.eq.${normalizedPhone}`)
+    .or(`delivery_phone.ilike.%${normalizedPhone}%`)
     .order("last_used_at", { ascending: false })
-    .limit(1);
+    .limit(5);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -38,6 +40,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ delivery: null });
   }
 
-  // 最新の配送履歴を返す
-  return NextResponse.json({ delivery: data[0] });
+  // 複数件ヒットした場合、正確に一致するものを優先
+  let bestMatch = data[0];
+  for (const item of data) {
+    const itemPhone = item.delivery_phone?.replace(/[-\s]/g, "") || "";
+    if (itemPhone === normalizedPhone) {
+      bestMatch = item;
+      break;
+    }
+  }
+
+  // 最適な配送履歴を返す
+  return NextResponse.json({ delivery: bestMatch });
 }
