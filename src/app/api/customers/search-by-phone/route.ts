@@ -21,13 +21,29 @@ export async function GET(request: NextRequest) {
   // 電話番号で検索（ハイフンあり・なし両対応）
   const normalizedPhone = phone.replace(/[-\s]/g, "");
   
+  // ハイフン付きパターンを生成（例: 09012345678 → 090-1234-5678）
+  let hyphenatedPhone = "";
+  if (normalizedPhone.match(/^\d{10,11}$/)) {
+    if (normalizedPhone.length === 11) {
+      // 携帯電話番号 (11桁)
+      hyphenatedPhone = `${normalizedPhone.slice(0,3)}-${normalizedPhone.slice(3,7)}-${normalizedPhone.slice(7)}`;
+    } else if (normalizedPhone.length === 10) {
+      // 固定電話番号 (10桁)
+      hyphenatedPhone = `${normalizedPhone.slice(0,3)}-${normalizedPhone.slice(3,6)}-${normalizedPhone.slice(6)}`;
+    }
+  }
+  
   // delivery_historyテーブルから最新の配送先情報を取得
-  // データベース側の電話番号もハイフンあり・なし両方の可能性があるため
-  // 複数パターンで検索
+  // 複数のパターンで検索
+  let orConditions = [`delivery_phone.eq.${phone}`, `delivery_phone.eq.${normalizedPhone}`];
+  if (hyphenatedPhone) {
+    orConditions.push(`delivery_phone.eq.${hyphenatedPhone}`);
+  }
+  
   const { data, error } = await supabase
     .from("delivery_history")
     .select("*")
-    .or(`delivery_phone.ilike.%${normalizedPhone}%`)
+    .or(orConditions.join(","))
     .order("last_used_at", { ascending: false })
     .limit(5);
 
