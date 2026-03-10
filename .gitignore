@@ -57,3 +57,6 @@ next-env.d.ts
 
 # Agent/AI tools
 .agent/
+
+# Documentation (local only)
+/docs/
