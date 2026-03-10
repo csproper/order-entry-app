@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAddressFromPostalCode } from "@/lib/postal-code";
 import { searchPostalCodeViaProxy } from "@/lib/postal-code-reverse";
 import { Button } from "@/components/ui/button";
-import { Search, Loader2, User } from "lucide-react";
+import { Search, Loader2, User, Phone } from "lucide-react";
 import { toast } from "sonner";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -41,6 +41,7 @@ export function CustomerSection({
   const [isCustomerOpen, setIsCustomerOpen] = useState(false);
   const [postalLoading, setPostalLoading] = useState(false);
   const [reverseSearching, setReverseSearching] = useState(false);
+  const [phoneSearching, setPhoneSearching] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const supabaseRef = useRef(createClient());
   const searchIdRef = useRef(0);
@@ -150,6 +151,39 @@ export function CustomerSection({
     }
   };
 
+  const handlePhoneSearch = async () => {
+    if (!values.customer_phone) {
+      toast.error("電話番号を入力してください");
+      return;
+    }
+
+    setPhoneSearching(true);
+    try {
+      const response = await fetch(`/api/customers/search-by-phone?phone=${encodeURIComponent(values.customer_phone)}`);
+      const data = await response.json();
+      
+      if (data.delivery) {
+        // 配送履歴から自動入力
+        onChange("customer_code", data.delivery.customer_code || "");
+        onChange("customer_name", data.delivery.delivery_name);
+        onChange("postal_code", data.delivery.delivery_postal_code || "");
+        onChange("prefecture", data.delivery.delivery_prefecture || "");
+        onChange("customer_address1", data.delivery.delivery_address || "");
+        // customer_code がある場合は顧客検索欄にも反映
+        if (data.delivery.customer_code) {
+          setCustomerQuery(data.delivery.customer_code);
+        }
+        toast.success("過去の配送履歴から情報を取得しました");
+      } else {
+        toast.info("該当する配送履歴が見つかりませんでした");
+      }
+    } catch (error) {
+      toast.error("配送履歴の検索に失敗しました");
+    } finally {
+      setPhoneSearching(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <h2 className="text-lg font-semibold border-b pb-2 flex items-center gap-2">
@@ -243,10 +277,27 @@ export function CustomerSection({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <Label>電話番号</Label>
-          <Input
-            value={values.customer_phone}
-            onChange={(e) => onChange("customer_phone", e.target.value)}
-          />
+          <div className="flex gap-2">
+            <Input
+              value={values.customer_phone}
+              onChange={(e) => onChange("customer_phone", e.target.value)}
+              placeholder="090-1234-5678"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={handlePhoneSearch}
+              disabled={phoneSearching || !values.customer_phone}
+              title="電話番号で配送履歴を検索"
+            >
+              {phoneSearching ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Phone className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
         </div>
         <div>
           <Label>メールアドレス</Label>

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { DatePickerSimple } from "@/components/ui/date-picker-simple";
-import { Trash2, UserSearch, History, Loader2, Search } from "lucide-react";
+import { Trash2, UserSearch, History, Loader2, Search, Phone } from "lucide-react";
 import { fetchAddressFromPostalCode } from "@/lib/postal-code";
 import { searchPostalCodeViaProxy } from "@/lib/postal-code-reverse";
 import { toast } from "sonner";
@@ -98,6 +98,7 @@ export function DetailItem({
 }: DetailItemProps) {
   const [postalLoading, setPostalLoading] = useState(false);
   const [reverseSearching, setReverseSearching] = useState(false);
+  const [phoneSearching, setPhoneSearching] = useState(false);
 
   // お届け先顧客検索
   const [deliverySearchQuery, setDeliverySearchQuery] = useState("");
@@ -258,6 +259,35 @@ export function DetailItem({
       toast.error("郵便番号の検索に失敗しました");
     } finally {
       setReverseSearching(false);
+    }
+  };
+
+  const handlePhoneSearch = async () => {
+    if (!values.delivery_phone) {
+      toast.error("電話番号を入力してください");
+      return;
+    }
+
+    setPhoneSearching(true);
+    try {
+      const response = await fetch(`/api/customers/search-by-phone?phone=${encodeURIComponent(values.delivery_phone)}`);
+      const data = await response.json();
+      
+      if (data.delivery) {
+        // 配送履歴から自動入力
+        onChange(index, "delivery_name", data.delivery.delivery_name);
+        onChange(index, "delivery_postal_code", data.delivery.delivery_postal_code || "");
+        onChange(index, "delivery_prefecture", data.delivery.delivery_prefecture || "");
+        onChange(index, "delivery_address1", data.delivery.delivery_address || "");
+        onChange(index, "delivery_address2", "");
+        toast.success("過去の配送履歴から情報を取得しました");
+      } else {
+        toast.info("該当する配送履歴が見つかりませんでした");
+      }
+    } catch (error) {
+      toast.error("配送履歴の検索に失敗しました");
+    } finally {
+      setPhoneSearching(false);
     }
   };
 
@@ -661,12 +691,29 @@ export function DetailItem({
           </div>
           <div>
             <Label className="text-xs">電話番号</Label>
-            <Input
-              value={values.delivery_phone}
-              onChange={(e) =>
-                onChange(index, "delivery_phone", e.target.value)
-              }
-            />
+            <div className="flex gap-2">
+              <Input
+                value={values.delivery_phone}
+                onChange={(e) =>
+                  onChange(index, "delivery_phone", e.target.value)
+                }
+                placeholder="090-1234-5678"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={handlePhoneSearch}
+                disabled={phoneSearching || !values.delivery_phone}
+                title="電話番号で配送履歴を検索"
+              >
+                {phoneSearching ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Phone className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
